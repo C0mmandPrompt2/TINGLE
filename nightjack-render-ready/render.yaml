@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: nightjack-private-rooms
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
