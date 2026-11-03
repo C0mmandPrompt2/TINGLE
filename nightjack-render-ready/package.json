@@ -1,16 +1,17 @@
 {
-  "name": "nightjack-private-rooms",
-  "version": "1.0.0",
+  "name": "nightjack-game-hub",
+  "version": "2.0.0",
   "private": true,
-  "description": "Private-room multiplayer Twenty-One card game with non-wagering virtual scores",
+  "description": "Non-wagering multiplayer Twenty-One & Texas Hold'em card game hub",
   "engines": {"node": ">=20"},
   "scripts": {
     "start": "node server.js",
-    "test": "node --test tests/*.test.js",
-    "check": "node --check server.js && node --check public/app.js"
+    "test": "node --test tests/v2-rules.test.js tests/v2-private-state.test.js tests/v2-accounts.test.js tests/v2-socket-simulation.test.js",
+    "check": "node --check server.js && node --check public/app.js && node --check rules.js && node --check account-store.js"
   },
   "dependencies": {
     "express": "^4.21.2",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "pg": "^8.13.1"
   }
 }

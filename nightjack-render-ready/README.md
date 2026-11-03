@@ -1,46 +1,57 @@
-# NIGHTJACK • Private Room Twenty-One
+# NIGHTJACK Game Hub — Version 2.0
 
-A real-time multiplayer card game for friends, with no purchases, wagers, real money, or prizes. Players earn purely virtual table points: 3 for a natural blackjack, 2 for an ordinary win, 1 for a push. Players cannot bet or exchange points for anything.
+A browser-based social card-game hub. No real or virtual wagering: **chips are non-transferable score points**, earned by winning free rounds. No purchases, trade, cash-out, or prizes.
 
-## Features
-- 6-character private room codes, 2–6 players
-- A shared dealer, server-controlled cards and turns
-- Hit, stand, ace scoring, natural blackjack, dealer stands on all 17s
-- Automatic round settlement and scoreboards
-- Private chat, connection indicator, host controls and host handoff
-- Temporary reconnection via browser session token
-- Accessible, responsive dark green / gold interface
+## Game modes
 
-## Run locally (Windows 11)
+- **Player vs player Twenty-One** — no dealer. Start with two cards, choose Hit or Stand in turn. Closest to 21 without busting wins (+100 score chips). Ties share the win. Opponents' cards and totals are hidden until results.
+- **Texas Hold'em hand showdown** — two private hole cards per player; the host reveals flop, turn and river. Best five-card hand from seven cards wins (+150 score chips). Players can fold, but there is **no betting, checking, raising, blinds or pots**. Equal poker hands share a win.
+- **Accounts** — username and password only, start at 2,000 score chips, wins and games tracked. Passwords are salted and hashed with Node scrypt.
+- **Leaderboard** — highest total score chips across accounts, rather than within a single room.
+- **Private rooms** — random six-character codes, 2–6 players, host controls, table chat, live updates, reconnection while server is active.
+- **Animated UI** — custom fan/hover-tilt cards, an editorial forest-green/cream/orange game-hub aesthetic, mobile-responsive pages and sound toggle.
 
-Install Node.js 20+ if necessary. In an extracted project folder, use:
+## Deploy to the *existing* Render web service
 
-```powershell
+Replace all the files inside `TINGLE/nightjack-render-ready` in your GitHub repository with the contents of this ZIP. **Do not upload a new parent folder inside `nightjack-render-ready`.** Keep your existing Render settings:
+
+- Root directory: `nightjack-render-ready`
+- Language: Node
+- Build: `npm install`
+- Start: `npm start`
+- Instance type: Free
+
+If auto-deploy is enabled, updating the `main` branch automatically updates the live website. Consider updating a separate branch first if you want to test before changing the live game. Your existing room sessions will reset when Render deploys a new version.
+
+## IMPORTANT: Persistent accounts require an external Postgres database
+
+The application starts **without** a database and still works for testing, but accounts, passwords and leaderboard scores live **only in server memory**. On a Render Free instance, they will disappear when the server spins down, restarts or redeploys. This is *not suitable for accounts that you want to keep*. The UI clearly labels this as demo score mode.
+
+For lasting scores, create a Postgres database from a trusted provider (e.g. Supabase Free, subject to its activity limits) and set its secret connection URL as the Render environment variable `DATABASE_URL` (never commit the URL to GitHub or send it in chat). Then redeploy. The app automatically creates the `nightjack_users` table. The database should use TLS as specified by the provider. 
+
+The optional `DATABASE_URL` variable is the only database configuration key used. If the database is unavailable at launch, the app fails to start rather than silently losing score data. Existing *demo-mode* scores won't be migrated into Postgres when it is connected.
+
+For free Render Postgres, note it currently expires after 30 days. Render's Free Web Service filesystem is ephemeral and cannot store persistent SQLite data. Check plan and usage limits before connecting external services.
+
+## Local development
+
+```bash
 npm install
+npm test
 npm start
 ```
 
-Then open `http://localhost:3000` in two browser tabs. To test different players, use one normal tab and one Incognito tab, or a second device. Only start after at least 2 connected players have joined.
+Visit `http://localhost:3000` in two browser profiles to test multiplayer. `npm run check` validates syntax. `/health` reports whether a persistent database is connected.
 
-Use `npm test` for card-rule unit tests.
+## Current limitations
 
-## Deploy on Render (Free Web Service)
+- Free Render servers spin down during inactivity, temporarily interrupting games and removing any in-memory rooms.
+- Account login sessions are stored in server memory and will require re-login after a restart, even when a database is connected.
+- One active browser session per user account at a time.
+- Hold'em is **hand showdown**, not traditional wagering poker. The room host controls street reveals.
+- No email or password recovery. Keep your password safe; accounts are username-only.
+- Designed for small private games, not high-traffic public hosting. Add stronger abuse controls and monitoring before opening it broadly.
 
-1. Create a NEW GitHub repository, for example `nightjack-private-rooms`.
-2. Upload **all the files inside** this project folder to the repository (not the ZIP file itself).
-3. In the Render dashboard, choose **New → Web Service**, connect the repository.
-4. Choose **Node**, **Free**, and ideally the **Singapore** region for Australian players.
-5. Build command: `npm install`; Start command: `npm start`. (The included `render.yaml` also describes this configuration.)
-6. After deployment completes, share your `https://....onrender.com` link. Create a room and send its 6-character code or the in-app room invitation link.
+## Original project
 
-The server listens on `0.0.0.0` and Render's `PORT` variable. Do **not** deploy as a static site: Socket.IO requires a running server.
-
-## Important limitations
-- Rooms, scores, and chat are **in memory**, so a service restart/redeploy will clear them. This keeps the hobby project simple and does not require a database.
-- Render's Free Web Services can sleep after 15 minutes of inactivity; the first visit after a sleep can take some time to respond.
-- Room codes are private-ish invite codes, **not passwords**. Only share them with people you know.
-- When the host disconnects, host status transfers to an available connected player.
-- Players who briefly disconnect may rejoin via their browser's saved private session token, as long as the server has not restarted and their seat remains available.
-- To keep the game purely social and non-wagering, it uses points instead of any betting mechanics.
-
-Source files: `server.js` is the Socket.IO server, `rules.js` has the game rules, `public/` has the interface.
+Based on the original NIGHTJACK 1.0 room-code version. New files: `account-store.js`, `state.js`, and expanded rules, server and frontend.
