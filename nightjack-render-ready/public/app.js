@@ -1,194 +1,60 @@
 'use strict';
-const app = document.getElementById('app');
-const socket = io({reconnection:true,reconnectionDelay:500,reconnectionDelayMax:3500});
-const sessionKey = 'nightjack-room-session';
-let state = null;
-let session = null;
-let connecting = true;
-let view = 'home';
-let lastCardCount = 0;
-let muted = sessionStorage.getItem('nightjack-muted') === '1';
-let toastTimer;
-let ticker;
-let pending = false;
-let chosenName = sessionStorage.getItem('nightjack-name') || '';
-const pathnameCode = location.pathname.match(/^\/room\/([A-Z0-9]{6})\/?$/i)?.[1]?.toUpperCase() || '';
-let chosenCode = pathnameCode;
-try{session = JSON.parse(sessionStorage.getItem(sessionKey)||'null');}catch(_){session=null;}
-if(session?.code) chosenCode=session.code;
-function esc(str){return String(str ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function short(str,n=12){const s=String(str??'');return s.length>n?s.slice(0,n-1)+'…':s;}
-function initials(name){return String(name||'?').split(/\s+/).map(x=>x[0]||'').join('').slice(0,2).toUpperCase();}
-function avatar(p,gold=false){return `<span class="avatar ${gold?'gold':''}">${esc(initials(p.name))}</span>`;}
-function showToast(message){const e=document.getElementById('toast');e.textContent=message;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),3800);}
-function emitAck(event,payload,onSuccess){
- if(!socket.connected){showToast('Connection lost. Trying to reconnect...');return;}
- if(pending)return;
- pending=true;
- socket.timeout(7000).emit(event,payload,(err,result)=>{
-  pending=false;
-  if(err){showToast('The server did not respond. Try again.');return;}
-  if(!result?.ok){showToast(result?.error||'That did not work.');return;}
-  if(onSuccess)onSuccess(result);
- });
-}
-function saveSession(result){
- session={code:result.code,playerId:result.playerId,token:result.token};
- sessionStorage.setItem(sessionKey,JSON.stringify(session));
- history.replaceState({},'',`/room/${result.code}`);
- view='room';
-}
-function clearSession(){
- session=null;state=null;view='home';lastCardCount=0;
- sessionStorage.removeItem(sessionKey);
- history.replaceState({},'', '/');
- render();
-}
-function tone(freq=600,duration=.05){
- if(muted)return;
- try{
-  const Context=window.AudioContext||window.webkitAudioContext;
-  if(!Context)return;
-  const ctx=tone.ctx||(tone.ctx=new Context());
-  if(ctx.state==='suspended')ctx.resume();
-  const osc=ctx.createOscillator(),vol=ctx.createGain();
-  osc.type='sine';osc.frequency.value=freq;
-  vol.gain.setValueAtTime(.0001,ctx.currentTime);vol.gain.exponentialRampToValueAtTime(.07,ctx.currentTime+.01);vol.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+duration);
-  osc.connect(vol);vol.connect(ctx.destination);osc.start();osc.stop(ctx.currentTime+duration+.02);
- }catch(_){}
-}
-function brand(){return `<a class="brand" href="/" data-action="navigate-home"><span class="brand-symbol">♠</span><span class="brand-word">NIGHT<span>JACK</span></span></a>`;}
-function topbar(inRoom=false){return `<header class="topbar">
-  ${brand()}
-  <div class="top-status"><span class="dot ${socket.connected?'':'off'}"></span>${socket.connected?'CONNECTED':'RECONNECTING'}</div>
-  <div class="top-actions">${inRoom?`<button class="tiny-button" data-action="invite">↗ INVITE FRIENDS</button>`:''}<button class="tiny-button" data-action="toggle-sound" title="Toggle sounds">${muted?'♪ OFF':'♫ ON'}</button></div>
-  </header>`;}
-function cardHTML(card,index=0){
- if(!card || card.hidden)return `<div class="playing-card back" style="animation-delay:${Math.min(index*0.08,.45)}s" aria-label="Face-down card"><div class="back-emblem">♠</div></div>`;
- const red=card.suit==='♥'||card.suit==='♦';
- return `<div class="playing-card ${red?'red':''}" style="animation-delay:${Math.min(index*.08,.4)}s" aria-label="${esc(card.rank)} of ${esc(card.suit)}">
-   <div class="corner">${esc(card.rank)}<small>${esc(card.suit)}</small></div><div class="card-middle">${esc(card.suit)}</div>
-   <div class="corner bottom-corner">${esc(card.rank)}<small>${esc(card.suit)}</small></div>
-  </div>`;
-}
-function handHTML(hand){return `<div class="card-hand">${(hand||[]).map(cardHTML).join('')}</div>`;}
-function home(){return `<div class="page-wrap">${topbar()}
-  <main class="home-grid">
-  <section class="hero">
-    <div class="eyebrow">THE PRIVATE TABLE EXPERIENCE</div>
-    <h1 class="hero-title">The cards are out.<br><em>Your friends are in.</em></h1>
-    <p class="hero-description">Your own table. Your own crew. Create a private room, send the code, and play classic Twenty-One together — wherever your friends are.</p>
-    <div class="highlights"><span>♠ &nbsp; 2–6 PLAYERS</span><span>⌁ &nbsp; REAL-TIME MULTIPLAYER</span><span>✧ &nbsp; NO SIGN-UP</span><span>♧ &nbsp; JUST FOR FUN</span></div>
-    <div class="hero-art" aria-hidden="true"><div class="sample-cards">${cardHTML({rank:'A',suit:'♠'})}${cardHTML({rank:'K',suit:'♥'})}</div><div class="sample-chip"></div></div>
-  </section>
-  <section class="entry-panel">
-    <div class="eyebrow" style="font-size:10px;margin-bottom:11px">YOUR TABLE AWAITS</div>
-    <h2 class="panel-heading">Make yourself at home.</h2><p class="panel-subtitle">A great game starts with great company. Jump into a private table in seconds.</p>
-    <form id="entry-form" autocomplete="off">
-      <div class="input-group"><label class="field-label" for="username">YOUR DISPLAY NAME</label><input id="username" class="text-field" maxlength="18" minlength="2" placeholder="What should we call you?" required value="${esc(chosenName)}"></div>
-      <button class="primary-button full" type="button" data-action="create">＋ &nbsp; CREATE PRIVATE TABLE</button>
-      <div class="divider-or">OR JOIN YOUR FRIENDS</div>
-      <label class="field-label" for="room-code">6-CHARACTER INVITE CODE</label>
-      <div class="join-row"><input id="room-code" class="text-field code-input" maxlength="6" placeholder="ABC123" value="${esc(chosenCode)}" aria-label="Room code"><button type="button" class="outline-button" data-action="join">JOIN →</button></div>
-    </form>
-    <div class="fair-play">♧ &nbsp; Free social card game. <b>No wagers, purchases or prizes.</b></div>
-  </section>
-  </main><footer class="site-footer">NIGHTJACK © 2026 · FRIENDS. CARDS. GOOD TIMES.</footer></div>`;}
-function sidePlayers(s){const sorted=[...s.players].sort((a,b)=>b.score-a.score);
- return `<aside class="side-panel"><div class="side-head"><div class="side-overline">PRIVATE ROOM</div><div class="room-code-line"><div class="room-code-value">${esc(s.code)}</div><button data-action="copy-code" class="icon-button" title="Copy room code">▣</button></div><div class="side-overline" style="margin-top:9px">${s.players.filter(p=>p.connected).length}/${s.players.length} ONLINE · UP TO 6 PLAYERS</div></div>
- <div class="side-head" style="padding:18px 18px 10px;border:0"><div class="side-overline">TABLE LEADERBOARD</div></div>
- <div class="player-list">${sorted.map(p=>`<div class="player-row ${p.id===s.meId?'me':''}">${avatar(p,p.id===s.hostId)}<div class="player-id"><div class="player-name">${esc(short(p.name,14))}${p.id===s.hostId?'<span class="small-badge">HOST</span>':''}</div><div class="player-meta">${p.connected?'● Online':'○ Offline'} · ${p.wins}W ${p.losses}L</div></div><div class="small-score">${p.score}<div style="font-size:8px;color:#a1b49f;letter-spacing:1px;text-align:center">PTS</div></div></div>`).join('')}</div>
- <div class="side-bottom"><div class="score-note">Scoring: <b style="color:#f4d58c">3</b> Blackjack · <b>2</b> Win · <b>1</b> Push<br>Points are only for fun.</div><button class="link-button" data-action="leave">↶ Leave table</button></div>
- </aside>`;}
-function personState(p,s){if(!p.connected)return '<span class="seat-state disconnected">Disconnected</span>';if(s.phase==='results'&&p.result)return `<span class="seat-state">${esc(p.result.label)}</span>`;if(s.phase==='playing'&&p.id===s.currentId)return '<span class="seat-state">● PLAYING</span>';if(p.blackjack)return '<span class="seat-state">BLACKJACK</span>';if(p.stood)return '<span class="seat-state">STOOD</span>';return '<span class="seat-state">READY</span>';}
-function seats(s){
- if(s.phase==='lobby'){return `<div class="player-seats">${s.players.map(p=>`<div class="seat"><div class="avatar ${p.id===s.hostId?'gold':''}" style="margin-bottom:8px">${esc(initials(p.name))}</div><div class="seat-name">${esc(short(p.name,10))}</div><span class="seat-state">${p.id===s.hostId?'HOST':p.connected?'JOINED':'OFFLINE'}</span></div>`).join('')}${Array.from({length:Math.max(0,Math.min(4,6-s.players.length))},()=>`<div class="seat empty-seat"><div class="empty-seat-icon">＋</div><div class="empty-seat-label">OPEN SEAT</div></div>`).join('')}</div>`;}
- return `<div class="player-seats">${s.players.filter(p=>p.inRound).map(p=>`<div class="seat ${p.id===s.currentId?'active':''}"><div class="seat-name">${p.id===s.meId?'✦ ':''}${esc(short(p.name,10))}</div><div class="seat-score">${p.total} ${p.blackjack?'★':''}</div>${handHTML(p.hand)}${personState(p,s)}</div>`).join('')}</div>`;
-}
-function timerText(s){if(!s.turnDeadline)return '';const t=Math.max(0,Math.ceil((s.turnDeadline-Date.now())/1000));return `${t}s`;}
-function tableMiddle(s){
- if(s.phase==='lobby')return `<div class="table-note">YOUR TABLE IS READY<small>Invite friends with code ${esc(s.code)}</small></div>`;
- if(s.phase==='results')return `<div class="table-note">ROUND ${s.round} COMPLETE<small>See the results below the table</small></div>`;
- const p=s.players.find(p=>p.id===s.currentId);
- return `<div class="table-note">${p?.id===s.meId?'YOUR TURN':esc(p?.name||'Dealer')+'’S TURN'}<small>Hit for another card or stand to keep your hand · <span id="turn-timer">${timerText(s)}</span></small></div>`;
-}
-function gameControls(s){
- const me=s.players.find(p=>p.id===s.meId);const isHost=s.hostId===s.meId;const isTurn=s.phase==='playing'&&s.currentId===s.meId&&socket.connected;
- if(s.phase==='lobby')return `<div class="control-box"><div class="control-info"><strong>${isHost?'Ready to deal?':'Waiting for the host'}</strong><p>${isHost?'Your friends need to join first. At least two players are required.':'Share the room code and get comfortable. The host starts the game.'}</p></div><div class="control-buttons"><button class="primary-button" data-action="start" ${!isHost||s.players.filter(p=>p.connected).length<2?'disabled':''}>DEAL THE CARDS →</button></div></div>`;
- if(s.phase==='results'){
-  const results=s.players.filter(p=>p.inRound).map(p=>`${esc(p.name)}: ${esc(p.result?.label||'—')} <b>+${p.result?.points||0}</b>`).join(' &nbsp;·&nbsp; ');
-  return `<div class="control-box"><div class="control-info"><strong>Round ${s.round} results</strong><p class="round-scores">${results}</p></div><div class="control-buttons"><button class="primary-button" data-action="start" ${!isHost||s.players.filter(p=>p.connected).length<2?'disabled':''}>${isHost?'NEXT ROUND →':'WAITING FOR HOST'}</button></div></div>`;
- }
- return `<div class="control-box"><div class="control-info"><strong>${isTurn?'Your move, '+esc(short(me.name,14))+'!':'The table is playing'}</strong><p>${isTurn?'Get closer to 21 without going over.':'Watch the cards and wait for your turn.'}</p></div><div class="control-buttons"><button class="outline-button" data-action="stand" ${!isTurn?'disabled':''}>✋ &nbsp; STAND</button><button class="primary-button" data-action="hit" ${!isTurn?'disabled':''}>＋ &nbsp; HIT</button></div></div>`;
-}
-function tableColumn(s){
- const dealer=s.dealer||{hand:[],total:null};
- return `<main class="table-column"><div class="table-header"><div><div class="table-title">The Private Table</div><div class="table-meta">${s.phase==='lobby'?'WAITING ROOM':`ROUND ${s.round}`} · CLASSIC 21</div></div><div class="table-indicator">♠ &nbsp; ${s.players.filter(p=>p.connected).length} PLAYERS ONLINE</div></div>
- <div class="felt-table"><div class="dealer-zone"><div class="seat-label">✦ &nbsp; THE DEALER &nbsp; ✦</div><div class="dealer-total">${dealer.total==null?(s.phase==='lobby'?'THE HOUSE IS READY':'ONE CARD IS HIDDEN'):`TOTAL ${dealer.total}`}</div>${s.phase==='lobby'?handHTML([{hidden:true},{hidden:true}]):handHTML(dealer.hand)}</div><div class="table-middle">${tableMiddle(s)}</div>${seats(s)}</div>
- ${s.phase==='results'?`<div class="result-banner">✦ &nbsp; THE CARDS ARE ON THE TABLE<small>Scoring is for fun: no betting, payments or prizes</small></div>`:''}
- ${gameControls(s)}
- </main>`;
-}
-function chatColumn(s){const messages=s.chat.map(msg=>`<div class="chat-entry">${avatar({name:msg.sender})}<div class="chat-details"><div class="chat-name">${esc(short(msg.sender,18))}<span class="chat-time">${new Date(msg.at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span></div><p class="chat-text">${esc(msg.message)}</p></div></div>`).join('');
- return `<aside class="side-panel chat-panel"><div class="side-head"><div class="side-overline">KEEP THE CONVERSATION GOING</div><h2 class="side-title">Table Chat <span style="color:var(--gold);font-size:16px">✦</span></h2></div>
- <div class="chat-log" id="chat-log">${messages||'<div class="chat-empty">No messages yet.<br>Say hello to your table. ♡</div>'}</div>
- <form class="chat-compose" id="chat-form"><input class="text-field" name="chat" id="chat-input" maxlength="160" autocomplete="off" placeholder="Say something nice..." aria-label="Chat message"><button class="chat-send" type="submit" title="Send message">➤</button></form>
- <div class="activity-section"><h4>TABLE ACTIVITY</h4>${s.activity.slice(-4).reverse().map(entry=>`<div class="activity-line">${esc(entry.message)}</div>`).join('')||'<div class="activity-line">Your room has been created.</div>'}</div></aside>`;
-}
-function room(s){return `<div class="page-wrap">${topbar(true)}<div class="room-layout">${sidePlayers(s)}${tableColumn(s)}${chatColumn(s)}</div><footer class="site-footer">YOUR PRIVATE ROOM · VIRTUAL POINTS ONLY · NO CASH PLAY</footer></div>`;}
-function render(){
- if(connecting){app.innerHTML=`<div class="loading-screen"><div class="brand-symbol">♠</div><div class="brand-word">NIGHT<span>JACK</span></div><div class="loading-line"></div><p>Preparing your table...</p></div>`;return;}
- const chatBox=document.getElementById('chat-log');const atBottom=!chatBox||chatBox.scrollHeight-chatBox.scrollTop-chatBox.clientHeight<100;
- const chatInput=document.getElementById('chat-input');const wasChatFocused=document.activeElement===chatInput;const draft=chatInput?.value;
- app.innerHTML=view==='room'&&state?room(state):home();
- if(view==='room'){
-  const fresh=document.getElementById('chat-log');if(fresh&&atBottom)fresh.scrollTop=fresh.scrollHeight;
-  const input=document.getElementById('chat-input');if(input&&draft)input.value=draft;
-  if(input&&wasChatFocused){input.focus();input.setSelectionRange(input.value.length,input.value.length);}
- }
-}
-function create(){const name=document.getElementById('username')?.value?.trim();if(!name||name.length<2){showToast('Please enter a name with at least 2 characters.');return;}chosenName=name;sessionStorage.setItem('nightjack-name',name);tone(700);emitAck('room:create',{name},result=>{saveSession(result);render();});}
-function join(){const name=document.getElementById('username')?.value?.trim();const code=document.getElementById('room-code')?.value?.trim().toUpperCase();if(!name||name.length<2){showToast('Please enter a name with at least 2 characters.');return;}if(!/^[A-Z0-9]{6}$/.test(code||'')){showToast('Enter a valid 6-character room code.');return;}chosenName=name;chosenCode=code;sessionStorage.setItem('nightjack-name',name);tone(650);emitAck('room:join',{name,code},result=>{saveSession(result);render();});}
-function copy(text){navigator.clipboard?.writeText(text).then(()=>showToast('Copied to clipboard!'),()=>showToast('Copy not available. Select the code instead.'))||showToast(text);}
-function onAction(type){if(type==='hit'||type==='stand'){tone(type==='hit'?840:520);emitAck('room:action',{type});}}
-function leave(){emitAck('room:leave',{},()=>clearSession());}
-function start(){tone(740,.09);emitAck('room:start',{});}
-function tick(){const el=document.getElementById('turn-timer');if(el&&state)el.textContent=timerText(state);}
-app.addEventListener('click',event=>{
- const control=event.target.closest('[data-action]');if(!control)return;
- const action=control.dataset.action;
- if(action==='create')create();else if(action==='join')join();else if(action==='hit'||action==='stand')onAction(action);
- else if(action==='start')start();else if(action==='leave')leave();
- else if(action==='copy-code'&&state)copy(state.code);
- else if(action==='invite'&&state)copy(`${location.origin}/room/${state.code}`);
- else if(action==='navigate-home'){event.preventDefault();if(view==='room')showToast('Use Leave table to exit your room.');else{history.replaceState({},'','/');render();}}
- else if(action==='toggle-sound'){muted=!muted;sessionStorage.setItem('nightjack-muted',muted?'1':'0');render();if(!muted)tone(640);}
+const app=document.getElementById('app');
+const socket=io({reconnection:true,reconnectionDelay:650,reconnectionDelayMax:3500});
+const KEY='nightjack-v2-auth',ROOM='nightjack-v2-room';
+let token=localStorage.getItem(KEY)||'',roomCode=sessionStorage.getItem(ROOM)||'',user=null,room=null,leaderboard=[],databasePersistent=false;
+let loading=true,authMode='register',mode=sessionStorage.getItem('nightjack-v2-mode')||'21',muted=sessionStorage.getItem('nightjack-v2-mute')==='yes',busy=false,toastTimer;
+const fromLink=location.pathname.match(/^\/room\/([A-Z0-9]{6})\/?$/i)?.[1]?.toUpperCase();if(fromLink)roomCode=fromLink;
+const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const initials=x=>String(x||'?').split(/[ _-]/).slice(0,2).map(x=>x[0]||'').join('').toUpperCase();
+const MODE={21:'TWENTY-ONE',holdem:'TEXAS HOLD’EM'};
+function notify(t){const e=document.getElementById('toast');if(!e)return;e.textContent=t;e.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('visible'),3600);}
+function playTone(f=480){if(muted)return;try{const AC=window.AudioContext||window.webkitAudioContext;const ctx=playTone.ctx||(playTone.ctx=new AC());if(ctx.state==='suspended')void ctx.resume();const o=ctx.createOscillator(),g=ctx.createGain();o.type='triangle';o.frequency.value=f;g.gain.setValueAtTime(.035,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+.085);o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+.09);}catch(_){}}
+function send(event,payload,success){if(!socket.connected){notify('Connecting to server...');return;}if(busy)return;busy=true;socket.timeout(9500).emit(event,payload,(err,result)=>{busy=false;if(err){notify('Server did not respond. Try again.');return;}if(!result?.ok){notify(result?.error||'Something went wrong.');return;}success?.(result);});}
+function requestLeaderboard(){if(socket.connected)socket.emit('leaderboard:fetch',{},data=>{if(data?.ok){leaderboard=data.rows;databasePersistent=data.persistent;render();}});}
+function saveRoom(code){roomCode=code;sessionStorage.setItem(ROOM,code);history.replaceState({},'',`/room/${code}`);}
+function clearRoom(){room=null;roomCode='';sessionStorage.removeItem(ROOM);history.replaceState({},'','/');render();}
+function header(){return `<header class="header"><a class="logo" href="/" data-action="home"><span class="mark">✳</span> NIGHT<span>JACK</span><small>GAME HUB</small></a><span class="online"><i class="${socket.connected?'':'offline'}"></i>${socket.connected?'ONLINE':'CONNECTING'}</span><nav>${user?`<div class="mini-account"><span class="profile-icon">${esc(initials(user.username))}</span><div><strong>${esc(user.username)}</strong><small><b>◈</b> ${user.chips.toLocaleString()} CHIPS</small></div></div><button class="plain-button" data-action="logout">LOG OUT</button>`:''}<button class="plain-button" data-action="mute">${muted?'SOUND OFF':'SOUND ON'}</button></nav></header>`;}
+function cardHTML(card,index=0){const hidden=!card||card.hidden,rank=hidden?'':esc(card.rank),suit=hidden?'':esc(card.suit),red=!hidden&&('♥♦'.includes(card.suit));return `<div class="playing-card ${hidden?'card-back':''} ${red?'card-red':''}" style="--i:${index};--f:${index-2}" tabindex="0" aria-label="${hidden?'Hidden card':rank+' '+suit}">${hidden?'<div class="card-pattern"><span>✳</span></div>':`<div class="card-corner">${rank}<small>${suit}</small></div><div class="card-icon">${suit}</div><div class="card-corner card-corner-bottom">${rank}<small>${suit}</small></div>`}</div>`;}
+function hand(cards,cls=''){return `<div class="cards ${cls}">${(cards||[]).map(cardHTML).join('')}</div>`;}
+function sampleCards(){return `<div class="showcase-cards">${cardHTML({rank:'A',suit:'♠'},0)}${cardHTML({rank:'K',suit:'♥'},1)}${cardHTML({rank:'7',suit:'♣'},2)}</div>`;}
+function leaderboardHTML(){return `<section class="leaderboard-panel"><div class="section-header"><span>THE ARCADE</span><h3>Chip leaderboard</h3><p>Chips are score points, not currency. No wagering, trading or prizes.</p></div><div class="leaderboard-items">${leaderboard.length?leaderboard.slice(0,12).map((p,i)=>`<div class="leader-row ${p.id===user?.id?'my-position':''}"><span class="position">${String(i+1).padStart(2,'0')}</span><span class="person-icon">${esc(initials(p.username))}</span><div class="leader-name">${esc(p.username)}<small>${p.wins} wins · ${p.games} games</small></div><strong>◈ ${Number(p.chips).toLocaleString()}</strong></div>`).join(''):'<div class="empty-message">No scores yet. Be first on the board.</div>'}</div><div class="memory-label">${databasePersistent?'● Scores are saved to the database':'◌ Demo score mode · scores reset when this server restarts'}</div></section>`;}
+function entryPage(){return `<div class="shell">${header()}<main class="entry-layout"><div class="feature"><div class="capsule">THE SOCIAL CARD GAME HUB <b>· 2–6 FRIENDS</b></div><h1>PLAY THE<br><em>HAND.</em><br>OWN THE<br>ROOM.</h1><p>Private rooms. Wild card moments. Two games to master. Your friends are the competition — not a dealer.</p>${sampleCards()}<div class="feature-foot">✳ BUILT FOR FRIENDS <span>◈ START WITH 2,000 CHIPS</span></div></div><section class="auth-panel"><div class="overline">PLAYER ACCESS / 01</div><h2>${authMode==='register'?'Join the hub.':'Welcome back.'}</h2><p class="subtle">${authMode==='register'?'Pick a username and password. No email required.':'Log in to keep playing with your friends.'}</p><form id="auth-form" autocomplete="on"><label>USERNAME<input name="username" maxlength="18" minlength="3" required placeholder="Your player name" autocomplete="username"></label><label>PASSWORD<input name="password" type="password" minlength="8" maxlength="128" required placeholder="At least 8 characters" autocomplete="${authMode==='register'?'new-password':'current-password'}"></label><button class="action-button full" type="submit">${authMode==='register'?'CREATE ACCOUNT':'LOG IN'} <span>↗</span></button></form><button class="switch-auth" data-action="auth-mode">${authMode==='register'?'Already registered? Log in':'New here? Create an account'}</button><div class="safety-line">♧ Arcade points only. No bets, purchases or cash prizes.</div></section></main></div>`;}
+function modeCard(id,label,sub,features,shape){return `<button class="mode-card ${mode===id?'chosen':''}" data-action="mode" data-mode="${id}"><span class="mode-art ${id}">${shape}</span><div class="mode-copy"><small>GAME MODE · ${id==='21'?'01':'02'}</small><h3>${label}</h3><p>${sub}</p><span>${features}</span></div><span class="mode-arrow">↗</span></button>`;}
+function dashboard(){return `<div class="shell">${header()}<main class="dashboard"><div class="dash-heading"><div><div class="overline">WELCOME BACK, ${esc(user.username.toUpperCase())}</div><h1>Pick a game<span class="period">.</span></h1><p>Different cards, same crew. Create a room or join your friends.</p></div><div class="wallet"><span>YOUR CHIP SCORE</span><strong>◈ ${Number(user.chips).toLocaleString()}</strong><small>STARTED AT 2,000 · NO WAGERING</small></div></div><div class="dashboard-body"><div class="main-area"><div class="section-overline">01 / CHOOSE YOUR MODE</div><div class="mode-grid">${modeCard('21','TWENTY-ONE','Closest to 21 wins. No dealer. Other players’ cards stay hidden until the reveal.','HIT · STAND · SHOWDOWN','<span>21</span>')}${modeCard('holdem','TEXAS HOLD’EM','Two private cards, five community cards, best five-card poker hand wins. No betting.','FLOP · TURN · RIVER','<span>♠</span>')}</div><div class="room-box"><div class="room-box-head"><span>02 / MAKE YOUR MOVE</span><strong>${MODE[mode]}</strong></div><div class="room-actions"><button class="action-button" data-action="create">+ CREATE PRIVATE ROOM</button><div class="or">OR</div><form id="join-form"><input id="join-code" maxlength="6" placeholder="ENTER ROOM CODE" value="${esc(roomCode)}" required><button type="submit" class="secondary-button">JOIN ROOM ↗</button></form></div><p class="help-line">6-character codes · 2 to 6 players · real-time multiplayer</p></div></div>${leaderboardHTML()}</div></main></div>`;}
+function playerSeat(p,s){const me=p.id===s.meId,active=p.id===s.currentId,playing=s.phase!=='lobby'&&s.phase!=='results';return `<section class="player-seat ${me?'my-seat':''} ${active?'active-seat':''}"><div class="seat-top"><span class="avatar">${esc(initials(p.name))}</span><div><strong>${esc(p.name)} ${me?'<span class="me-mark">YOU</span>':''}</strong><small>${p.id===s.hostId?'✳ HOST · ':''}${p.connected?'CONNECTED':'OFFLINE'}</small></div><span class="seat-chips">◈ ${Number(p.chips).toLocaleString()}</span></div>${p.inRound?hand(p.hand):'<div class="empty-hand">WAITING FOR NEXT ROUND</div>'}<div class="seat-bottom">${playing?(p.folded?'FOLDED':(me&&p.total!=null?`YOUR TOTAL ${p.total}`:s.mode==='21'?'CARDS HIDDEN':'HOLE CARDS PRIVATE')):s.phase==='results'?`${esc(p.result?.label||'')} ${p.result?.points?`<b>+${p.result.points} CHIPS</b>`:''}`:p.id===s.hostId?'ROOM HOST':'READY TO PLAY'}</div></section>`;}
+function stageInfo(s){if(s.phase==='lobby')return 'WAITING FOR PLAYERS';if(s.phase==='results')return 'ROUND FINISHED';if(s.mode==='21')return 'PLAY TO 21';return {preflop:'THE DEAL',flop:'THE FLOP',turn:'THE TURN',river:'THE RIVER',settling:'SCORING HANDS'}[s.phase]||s.phase.toUpperCase();}
+function gameBoard(s){const isPoker=s.mode==='holdem';return `<div class="game-surface"><div class="board-top"><div><span class="overline">${MODE[s.mode]} / ROUND ${s.round}</span><h2>${stageInfo(s)}<span class="period">.</span></h2></div><div class="board-symbol">${isPoker?'♠':'21'}</div></div>${isPoker?`<div class="community"><span>COMMUNITY CARDS</span>${s.board.length?hand(s.board,'board-hand'):'<div class="community-placeholder">THE BOARD IS WAITING · FIVE CARDS WILL BE REVEALED</div>'}</div>`:`<div class="community"><span>NO DEALER · PLAYER VS PLAYER</span><div class="game-tagline">Get closest to <strong>21</strong> without going over.</div></div>`}<div class="seat-grid">${s.players.map(p=>playerSeat(p,s)).join('')}${s.phase==='lobby'?Array.from({length:Math.max(0,Math.min(2,6-s.players.length))},()=>'<div class="open-seat">+ OPEN SEAT</div>').join(''):''}</div></div>`;}
+function controls(s){const host=s.hostId===s.meId,playing=s.phase==='playing',turn=playing&&s.currentId===s.meId&&socket.connected,me=s.players.find(p=>p.id===s.meId),canStart=host&&s.connectedCount>=2;
+ if(s.phase==='lobby'||s.phase==='results'){return `<div class="controls"><div><span class="overline">${s.phase==='lobby'?'YOUR PRIVATE LOBBY':'SCOREBOARD'}</span><strong>${s.phase==='lobby'?'Ready to run it back?':s.notice||'Round complete.'}</strong><small>${s.phase==='lobby'?'Invite another player to begin.':'Winning players earned chip score points. Nobody loses chips.'}</small></div><button class="action-button" data-action="start" ${!canStart?'disabled':''}>${host?'START ROUND ↗':'WAITING FOR HOST'}</button></div>`;}
+ if(s.mode==='21'){return `<div class="controls"><div><span class="overline">${turn?'YOUR MOVE':'CURRENT TURN'}</span><strong>${turn?'Hit or stand?':esc(s.players.find(p=>p.id===s.currentId)?.name||'Calculating')+' is up'}</strong><small>${turn?'Your hand is private until showdown.':'Other players’ cards remain concealed.'} ${s.turnDeadline?'<span id="timer"></span>':''}</small></div><div class="control-actions"><button class="secondary-button" data-action="stand" ${!turn?'disabled':''}>STAND</button><button class="action-button" data-action="hit" ${!turn?'disabled':''}>HIT +</button></div></div>`;}
+ const advance={preflop:'REVEAL FLOP',flop:'REVEAL TURN',turn:'REVEAL RIVER',river:'SHOWDOWN'}[s.phase];return `<div class="controls"><div><span class="overline">NO-BET HOLDEM</span><strong>${host?'Reveal the next street':'Waiting for the host'}</strong><small>Make your best five-card hand. ${me?.folded?'You folded this round.':'Your two cards stay private.'}</small></div><div class="control-actions"><button class="secondary-button" data-action="fold" ${me?.folded||!me?.inRound?'disabled':''}>FOLD</button><button class="action-button" data-action="advance" ${!host||!advance?'disabled':''}>${host?advance:'HOST CONTROLS'} ↗</button></div></div>`;}
+function tableSidebar(s){return `<aside class="game-aside"><div class="room-id"><small>ROOM CODE</small><div>${esc(s.code)}<button data-action="copy" title="Copy room code">⧉</button></div><span>${s.connectedCount}/6 PLAYERS CONNECTED</span><button class="invite" data-action="invite">↗ COPY INVITE LINK</button></div><div class="table-scores"><div class="section-overline">PLAYER SCORES</div>${[...s.players].sort((a,b)=>b.chips-a.chips).map((p,i)=>`<div class="table-score"><span>${i+1}</span><b>${esc(p.name)}</b><strong>◈ ${Number(p.chips).toLocaleString()}</strong></div>`).join('')}</div><div class="chat-box"><div class="section-overline">ROOM CHAT</div><div class="chat-messages" id="chat-messages">${s.chat.length?s.chat.map(m=>`<div><b>${esc(m.sender)}</b><p>${esc(m.message)}</p></div>`).join(''):'<p class="chat-placeholder">Keep it friendly. Say hello!</p>'}</div><form id="chat-form"><input name="message" maxlength="130" autocomplete="off" placeholder="Send a message"><button type="submit">↗</button></form></div><button class="leave-link" data-action="leave">← LEAVE ROOM</button></aside>`;}
+function gameRoom(s){return `<div class="shell">${header()}<main class="game-layout"><div class="game-main"><div class="game-breadcrumb"><button data-action="leave">← GAME HUB</button><span>${MODE[s.mode]}</span><span>PRIVATE ROOM / ${esc(s.code)}</span></div>${gameBoard(s)}${controls(s)}<div class="game-notice">◌ ALL CHIPS ARE POINTS ONLY · NO STAKES, TRADES OR PRIZES</div></div>${tableSidebar(s)}</main></div>`;}
+function render(){if(loading){app.innerHTML='<div class="loading"><span>✳</span><h1>NIGHTJACK</h1><p>SHUFFLING THE DECK...</p></div>';return;}const oldChat=document.getElementById('chat-messages'),atEnd=!oldChat||oldChat.scrollTop+oldChat.clientHeight>=oldChat.scrollHeight-48;const oldInput=document.querySelector('#chat-form input'),draft=oldInput?.value||'',focused=document.activeElement===oldInput;
+ app.innerHTML=!user?entryPage():room?gameRoom(room):dashboard();const chat=document.getElementById('chat-messages');if(chat&&atEnd)chat.scrollTop=chat.scrollHeight;const input=document.querySelector('#chat-form input');if(input){input.value=draft;if(focused)input.focus();}}
+function reloadIdentity(){if(!token){loading=false;user=null;render();return;}socket.timeout(9000).emit('auth:resume',{token},(err,r)=>{loading=false;if(err||!r?.ok){token='';localStorage.removeItem(KEY);room=null;user=null;render();return;}user=r.user;databasePersistent=r.persistent;requestLeaderboard();if(roomCode)socket.timeout(9000).emit('room:resume',{code:roomCode},(e,result)=>{if(e||!result?.ok){if(fromLink){roomCode=fromLink;sessionStorage.removeItem(ROOM);history.replaceState({},'','/');render();}else clearRoom();return;}saveRoom(result.code);});render();});}
+app.addEventListener('submit',e=>{e.preventDefault();if(e.target.id==='auth-form'){const f=new FormData(e.target),username=String(f.get('username')||''),password=String(f.get('password')||'');send(authMode==='register'?'auth:register':'auth:login',{username,password},r=>{user=r.user;token=r.token;databasePersistent=r.persistent;localStorage.setItem(KEY,token);playTone(720);requestLeaderboard();render();if(fromLink){send('room:join',{code:fromLink},r=>{saveRoom(r.code);render();});}});}
+ else if(e.target.id==='join-form'){const code=document.getElementById('join-code')?.value.trim().toUpperCase();if(!/^[A-Z0-9]{6}$/.test(code))return notify('Enter a 6-character room code.');send('room:join',{code},r=>{saveRoom(r.code);playTone(620);render();});}
+ else if(e.target.id==='chat-form'){const msg=e.target.elements.message.value.trim();if(!msg)return;send('room:chat',{message:msg},()=>{const i=document.querySelector('#chat-form input');if(i)i.value='';});}});
+app.addEventListener('input',e=>{if(e.target.id==='join-code')e.target.value=e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'');});
+app.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el)return;const a=el.dataset.action;
+ if(a==='auth-mode'){authMode=authMode==='register'?'login':'register';render();}else if(a==='mode'){mode=el.dataset.mode;sessionStorage.setItem('nightjack-v2-mode',mode);render();}
+ else if(a==='logout'){send('auth:logout',{},()=>{token='';user=null;localStorage.removeItem(KEY);clearRoom();});}
+ else if(a==='create'){send('room:create',{mode},r=>{saveRoom(r.code);playTone(750);render();});}
+ else if(a==='leave'){send('room:leave',{},clearRoom);}
+ else if(a==='start'){send('room:start',{},()=>playTone(800));}
+ else if(['hit','stand','fold'].includes(a)){send('room:action',{type:a},()=>playTone(a==='hit'?880:420));}
+ else if(a==='advance'){send('room:advance',{},()=>playTone(700));}
+ else if(a==='copy'||a==='invite'){if(!room)return;const value=a==='invite'?`${location.origin}/room/${room.code}`:room.code;navigator.clipboard.writeText(value).then(()=>notify('Copied!'),()=>notify('Could not copy automatically.'));}
+ else if(a==='mute'){muted=!muted;sessionStorage.setItem('nightjack-v2-mute',muted?'yes':'no');render();if(!muted)playTone(610);}
+ else if(a==='home'){e.preventDefault();if(room)notify('Leave the room to return to the hub.');else{history.replaceState({},'','/');render();}}
 });
-app.addEventListener('submit',event=>{
- event.preventDefault();
- if(event.target.id==='chat-form'){
-  const input=document.getElementById('chat-input');const message=input?.value?.trim();
-  if(!message)return;
-  emitAck('room:chat',{message},()=>{if(input)input.value='';});
- }else if(event.target.id==='entry-form')join();
-});
-app.addEventListener('input',event=>{if(event.target.id==='room-code')event.target.value=event.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'');});
-socket.on('connect',()=>{
- connecting=false;
- if(session?.code&&session?.token){
-  socket.timeout(7000).emit('room:resume',session,(err,response)=>{
-   if(err){showToast('The server is taking a while. Reconnecting...');render();return;}
-   if(!response?.ok){clearSession();showToast(response?.error||'Your room is no longer available.');return;}
-   saveSession(response);render();
-  });
- }else render();
-});
-socket.on('room:state',s=>{
- const count=s.players.reduce((n,p)=>n+(p.hand?.length||0),0)+(s.dealer?.hand?.length||0);
- if(state&&count>lastCardCount)tone(640,.035);
- lastCardCount=count;
- state=s;view='room';connecting=false;render();
-});
-socket.on('disconnect',()=>{if(view==='room')showToast('Connection lost. Reconnecting...');render();});
-setTimeout(()=>{if(connecting){connecting=false;render();showToast('Connecting to the server...');}},4000);
-ticker=setInterval(tick,500);
+app.addEventListener('pointermove',e=>{const card=e.target.closest('.playing-card');if(!card||e.pointerType==='touch')return;const b=card.getBoundingClientRect(),dx=(e.clientX-b.left)/b.width-.5,dy=(e.clientY-b.top)/b.height-.5;card.style.setProperty('--rx',`${(-dy*12).toFixed(1)}deg`);card.style.setProperty('--ry',`${(dx*12).toFixed(1)}deg`);});
+app.addEventListener('pointerout',e=>{const card=e.target.closest('.playing-card');if(card&&!card.contains(e.relatedTarget)){card.style.removeProperty('--rx');card.style.removeProperty('--ry');}});
+socket.on('connect',()=>{loading=true;reloadIdentity();});
+socket.on('disconnect',()=>{if(user)notify('Connection lost. Reconnecting...');render();});
+socket.on('room:state',r=>{const previous=room;room=r;if(user){const me=r.players.find(p=>p.id===r.meId);if(me){user.chips=me.chips;user.wins=me.wins;user.games=me.games;}}if(previous&&r.round>previous.round)playTone(820);if(previous&&r.phase==='results'&&previous.phase!=='results')playTone(630);render();});
+socket.on('leaderboard:state',data=>{leaderboard=data.rows;databasePersistent=data.persistent;render();});
+setInterval(()=>{const e=document.getElementById('timer');if(e&&room?.turnDeadline)e.textContent=` · ${Math.max(0,Math.ceil((room.turnDeadline-Date.now())/1000))}s`;},500);
+setTimeout(()=>{if(loading){loading=false;render();notify('Connecting to the game server...');}},6500);

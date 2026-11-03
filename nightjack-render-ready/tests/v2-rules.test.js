@@ -1,0 +1,11 @@
+'use strict';
+const {test}=require('node:test');const assert=require('node:assert/strict');
+const {createDeck,shuffle,valueOf,twentyOneWinners,evaluateSeven,holdemWinners}=require('../rules');
+const c=(rank,suit='♠')=>({rank,suit});
+test('deck is 52 unique cards and shuffle retains all cards',()=>{const deck=createDeck(),sh=shuffle(deck,()=>0.4);assert.equal(deck.length,52);assert.equal(new Set(deck.map(x=>x.rank+x.suit)).size,52);assert.equal(new Set(sh.map(x=>x.rank+x.suit)).size,52);});
+test('Ace becomes 1 when needed, bust is over 21',()=>{assert.equal(valueOf([c('A'),c('A'),c('9')]).total,21);assert.equal(valueOf([c('K'),c('Q'),c('2')]).busted,true);});
+test('Twenty-One selects top player without a dealer and ignores busts',()=>{const p=[{id:'a',hand:[c('10'),c('K')]},{id:'b',hand:[c('A'),c('K')]},{id:'c',hand:[c('K'),c('Q'),c('2')]}];assert.deepEqual(twentyOneWinners(p).winners,['b']);});
+test('Twenty-One splits ties and makes no winner if everyone busts',()=>{let players=[{id:'a',hand:[c('J'),c('Q')]},{id:'b',hand:[c('K'),c('10')]}];assert.deepEqual(twentyOneWinners(players).winners,['a','b']);players=players.map(p=>({...p,hand:[c('K'),c('J'),c('5')]}));assert.deepEqual(twentyOneWinners(players).winners,[]);});
+test('poker recognises wheel straight and royal flush',()=>{assert.equal(evaluateSeven([c('A'),c('2','♥'),c('3'),c('4'),c('5'),c('9','♦'),c('Q','♦')]).label,'Straight');assert.equal(evaluateSeven([c('10'),c('J'),c('Q'),c('K'),c('A'),c('2','♣'),c('3','♥')]).label,'Royal flush');});
+test('poker compares seven cards and breaks ties with kickers',()=>{const board=[c('A'),c('A','♥'),c('10','♣'),c('7','♦'),c('3','♣')];const players=[{id:'one',hand:[c('Q'),c('J','♣')]},{id:'two',hand:[c('K','♣'),c('2','♥')]}];assert.deepEqual(holdemWinners(players,board).winners,['two']);});
+test('poker handles shared board wins, and folds',()=>{const board=[c('10'),c('J'),c('Q'),c('K'),c('A')];const p=[{id:'one',hand:[c('4','♥'),c('2','♦')]},{id:'two',hand:[c('3','♥'),c('5','♦')]}];assert.deepEqual(holdemWinners(p,board).winners,['one','two']);p[0].folded=true;assert.deepEqual(holdemWinners(p,board).winners,['two']);});
