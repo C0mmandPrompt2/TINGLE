@@ -1,57 +1,73 @@
-# NIGHTJACK Game Hub — Version 2.0
+# NIGHT JACK 3.0 — Pixel-Art Multiplayer Card Game Hub
 
-A browser-based social card-game hub. No real or virtual wagering: **chips are non-transferable score points**, earned by winning free rounds. No purchases, trade, cash-out, or prizes.
+An actual update to the existing NIGHTJACK project, built for the same Render Node.js service and the existing Supabase PostgreSQL database. **All chips are free, fictional game-score points. No real-money deposits, purchases, transfer, redemption, prizes or cash-out.**
 
-## Game modes
+## What is included
 
-- **Player vs player Twenty-One** — no dealer. Start with two cards, choose Hit or Stand in turn. Closest to 21 without busting wins (+100 score chips). Ties share the win. Opponents' cards and totals are hidden until results.
-- **Texas Hold'em hand showdown** — two private hole cards per player; the host reveals flop, turn and river. Best five-card hand from seven cards wins (+150 score chips). Players can fold, but there is **no betting, checking, raising, blinds or pots**. Equal poker hands share a win.
-- **Accounts** — username and password only, start at 2,000 score chips, wins and games tracked. Passwords are salted and hashed with Node scrypt.
-- **Leaderboard** — highest total score chips across accounts, rather than within a single room.
-- **Private rooms** — random six-character codes, 2–6 players, host controls, table chat, live updates, reconnection while server is active.
-- **Animated UI** — custom fan/hover-tilt cards, an editorial forest-green/cream/orange game-hub aesthetic, mobile-responsive pages and sound toggle.
+- **Visual rebuild:** main menu using the supplied NIGHT JACK artwork with functioning Play, Shop, Quests and Settings hotspots; original pixel-art face-card sprites and Joker; hover tilt, card dealing, CRT, particle and sound options; responsive supporting screens.
+- **Accounts:** same existing `nightjack_users` records; username-or-email login, new email field for registrations, password hashing, saved sessions and one-time *displayed* account recovery code. New users still start with **2,000** chips. Existing accounts can log in with their username and original password.
+- **Two game modes:** two human players versus an automated Blackjack dealer (Hit, Stand, Double), or Texas Hold'em 2–6 players with Check, Call, Raise, Fold and All-in. Server controls the deck and turns, community cards are revealed one at a time, and poker calculates winning hands, ties and side pots.
+- **Room codes and social play:** public room browser, private six-character rooms, join by shared code/link, host start button, chat and brief disconnect recovery.
+- **Score and quests:** free virtual-chip scores can rise and fall; persistent leaderboard, eight claim-once quests, +500 daily bonus once per 24 hours. Server authorizes balance changes and prevents duplicate reward claims.
+- **Shop:** fully styled **THE NIGHT MARKET — COMING SOON**, with no purchasable skins/items. Empty SQL tables lay the groundwork for local-only cosmetic designs later. No shop purchases are implemented.
+- **Settings:** functional audio sliders / sound toggle, graphics toggles, card animation, reduced effects, gameplay hints and confirmation before folding, stored locally.
 
-## Deploy to the *existing* Render web service
+## How to update your *existing* website
 
-Replace all the files inside `TINGLE/nightjack-render-ready` in your GitHub repository with the contents of this ZIP. **Do not upload a new parent folder inside `nightjack-render-ready`.** Keep your existing Render settings:
+**DO NOT deploy a new Render service or create a new Supabase project.**
 
-- Root directory: `nightjack-render-ready`
-- Language: Node
-- Build: `npm install`
-- Start: `npm start`
-- Instance type: Free
+1. Keep your current live Render service at `https://nightjack.onrender.com` unchanged while preparing the update.
+2. In GitHub `C0mmandPrompt2/TINGLE`, create a new branch, e.g. `nightjack-v3-pixel`, from `main`.
+3. Open the folder `nightjack-render-ready` **inside that branch**.
+4. Upload/replace the contents of this ZIP's `nightjack-render-ready` folder in the existing folder. Do NOT nest an extra `nightjack-render-ready` folder. Verify that `server.js`, `account-store.js`, `rules.js`, `package.json`, `public/` and `tests/` are at the same level.
+5. Commit to that **new branch only**. Create a Pull Request into `main`, review it, then merge when you are ready. Since Render auto-deploys `main`, merging publishes the update.
+6. Keep Render's existing configuration: Root directory `nightjack-render-ready`, build `npm install`, start `npm start`, Node runtime. Keep the existing secret `DATABASE_URL` variable untouched.
+7. After deploy, read Render logs. Successful startup should log `NIGHT JACK v3 listening ...; database: true`. Check `/health` returns `{ "ok": true, "version": "3.0", "persistentAccounts": true }`. Do NOT share database credentials or Render secret values.
+8. Hard-refresh the website with `Ctrl + Shift + R`. Create two **test accounts**, use two separate browsers to join a room, check chat, private cards, blackjack and Hold'em, then verify the scores/quests.
 
-If auto-deploy is enabled, updating the `main` branch automatically updates the live website. Consider updating a separate branch first if you want to test before changing the live game. Your existing room sessions will reset when Render deploys a new version.
+### Database upgrades
 
-## IMPORTANT: Persistent accounts require an external Postgres database
+On startup, the server **reuses** the old Supabase `nightjack_users` table and applies *additive* SQL migrations: `email`, `recovery_hash`, streak and mode-win stats, bonus timestamp; saved session table, claim table, round-settlement ID table and two empty cosmetic tables. **No existing user balances are intentionally reset.**
 
-The application starts **without** a database and still works for testing, but accounts, passwords and leaderboard scores live **only in server memory**. On a Render Free instance, they will disappear when the server spins down, restarts or redeploys. This is *not suitable for accounts that you want to keep*. The UI clearly labels this as demo score mode.
+The SQL migration hasn't been run against the user's actual Supabase instance in this sandbox, so **back up any important account data and verify the deploy logs**. With no `DATABASE_URL`, a local demo memory-mode still starts, but data will not persist across restarts. The Render URL already has a configured `DATABASE_URL`; no extra secret needs to be added to the repository.
 
-For lasting scores, create a Postgres database from a trusted provider (e.g. Supabase Free, subject to its activity limits) and set its secret connection URL as the Render environment variable `DATABASE_URL` (never commit the URL to GitHub or send it in chat). Then redeploy. The app automatically creates the `nightjack_users` table. The database should use TLS as specified by the provider. 
+**Privacy:** Real recovery codes are shown once upon signup. Save them in a password manager. The app does *not* email recovery links, since no email-sending provider has been configured. Existing V2 accounts have no recovery code; they retain username/password login. New accounts have a real recovery-code reset flow. Do not use real passwords in test accounts.
 
-The optional `DATABASE_URL` variable is the only database configuration key used. If the database is unavailable at launch, the app fails to start rather than silently losing score data. Existing *demo-mode* scores won't be migrated into Postgres when it is connected.
+### Realistic limitations
 
-For free Render Postgres, note it currently expires after 30 days. Render's Free Web Service filesystem is ephemeral and cannot store persistent SQLite data. Check plan and usage limits before connecting external services.
+- The project passed automated rule, account, interface-routing and simulated-Socket.IO tests. **Live multiplayer testing on Render, live Supabase schema migration, and a full browser/visual regression test are still pending.**
+- On the free Render plan, inactive web services spin down and in-memory rooms are cleared; PostgreSQL-backed accounts/score data remains saved. Database sessions persist, but room sessions don't survive server restarts.
+- Free virtual score chips are committed to each hand for gameplay and can be earned/lost, but have no monetary value. No buying, trading, loot boxes or prizes.
+- Current Blackjack uses a two-human-plus-dealer table, without pair splitting or insurance.
+- Public room lists are live in server memory; they are not stored across Render restarts.
+- Optional room passwords and email delivery are not yet implemented. A six-character private join code is the available privacy mechanism.
+- Cosmetic tables are intentionally empty; there is no skin purchase or equipment UI until assets are added.
+- Intended for a small friends-only social game. Additional abuse controls, database review and user testing are recommended before opening to a large public audience.
 
-## Local development
+## Local development (Windows 11)
+
+Install Node.js 20+ and open Command Prompt in the folder containing `package.json`:
 
 ```bash
 npm install
+npm run check
 npm test
 npm start
 ```
 
-Visit `http://localhost:3000` in two browser profiles to test multiplayer. `npm run check` validates syntax. `/health` reports whether a persistent database is connected.
+Then open `http://localhost:3000`. With no `DATABASE_URL`, accounts reset when the server stops. To test online, only supply the secret connection string in server environment variables, never in files checked into GitHub.
 
-## Current limitations
+## Tech stack and file map
 
-- Free Render servers spin down during inactivity, temporarily interrupting games and removing any in-memory rooms.
-- Account login sessions are stored in server memory and will require re-login after a restart, even when a database is connected.
-- One active browser session per user account at a time.
-- Hold'em is **hand showdown**, not traditional wagering poker. The room host controls street reveals.
-- No email or password recovery. Keep your password safe; accounts are username-only.
-- Designed for small private games, not high-traffic public hosting. Add stronger abuse controls and monitoring before opening it broadly.
+- `public/index.html` — page shell and browser assets
+- `public/app.js` — functional frontend views, Socket.IO client, settings, game UI
+- `public/styles.css` — full retro pixel-art look and responsive design
+- `public/assets/` — reference-based main menu art and new original pixel sprites
+- `server.js` — Express, Socket.IO, room manager, Blackjack and Hold'em progression
+- `rules.js` — blackjack points and poker hand evaluations
+- `account-store.js` — Supabase/PostgreSQL migration, session/account/quest/score persistence
+- `tests/v3*.test.js` — automated tests
 
-## Original project
+### Safety and security
 
-Based on the original NIGHTJACK 1.0 room-code version. New files: `account-store.js`, `state.js`, and expanded rules, server and frontend.
+Server-side operations own all sensitive card/state/score data. Hidden opponent cards and hidden dealer card are omitted from each client's room snapshot. Passwords are salted and hashed. No secret keys belong in the frontend or in GitHub. Public chat is basic, escaped and rate-limited; avoid sharing personal information with other players.

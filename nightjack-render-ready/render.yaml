@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: nightjack-private-rooms
+    name: nightjack
     runtime: node
     plan: free
     region: singapore

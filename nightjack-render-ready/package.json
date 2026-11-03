@@ -1,17 +1,13 @@
 {
-  "name": "nightjack-game-hub",
-  "version": "2.0.0",
-  "private": true,
-  "description": "Non-wagering multiplayer Twenty-One & Texas Hold'em card game hub",
-  "engines": {"node": ">=20"},
-  "scripts": {
-    "start": "node server.js",
-    "test": "node --test tests/v2-rules.test.js tests/v2-private-state.test.js tests/v2-accounts.test.js tests/v2-socket-simulation.test.js",
-    "check": "node --check server.js && node --check public/app.js && node --check rules.js && node --check account-store.js"
+  "name":"nightjack-game-hub",
+  "version":"3.0.0",
+  "private":true,
+  "description":"Pixel-art social card game hub: blackjack and Texas Hold'em with free fictional point chips",
+  "engines":{"node":">=20"},
+  "scripts":{
+    "start":"node server.js",
+    "test":"node --test tests/v3*.test.js",
+    "check":"node --check server.js && node --check rules.js && node --check account-store.js && node --check public/app.js"
   },
-  "dependencies": {
-    "express": "^4.21.2",
-    "socket.io": "^4.8.1",
-    "pg": "^8.13.1"
-  }
+  "dependencies":{"express":"^4.21.2","socket.io":"^4.8.1","pg":"^8.13.1"}
 }
