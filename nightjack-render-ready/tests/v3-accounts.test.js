@@ -1,0 +1,30 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const db=require('../account-store');
+const prefix='user'+String(Date.now()).slice(-7);
+test('Registration, unique usernames/emails, password recovery and persistent sessions',async()=>{
+ const a=await db.register(prefix,'long-pass-123',`${prefix}@example.org`);
+ assert.equal(a.chips,2000);assert.ok(a.recoveryCode.length>20);
+ assert.equal((await db.login(prefix,'long-pass-123')).id,a.id);
+ assert.equal((await db.login(`${prefix}@example.org`,'long-pass-123')).id,a.id);
+ await assert.rejects(db.register(prefix,'another-pass',`other-${prefix}@example.org`),/already used/);
+ await assert.rejects(db.register(prefix+'x','another-pass',`${prefix}@example.org`),/already used/);
+ const token=await db.createSession(a.id);assert.equal((await db.getSessionUser(token)).id,a.id);
+ await db.resetPassword(prefix,a.recoveryCode,'another-long-pass');
+ await assert.rejects(db.login(prefix,'long-pass-123'),/Incorrect/);
+ assert.ok(await db.login(prefix,'another-long-pass'));
+ await db.revokeSession(token);assert.equal(await db.getSessionUser(token),null);
+});
+test('Round settlements are idempotent, prevent overdrafts, and track quests',async()=>{
+ const n=String(Date.now()).slice(-8);const a=await db.register('winner'+n,'strong-pass-a');const b=await db.register('loser'+n,'strong-pass-b');
+ assert.equal(await db.settleRound('test-round-'+n,'holdem',[{id:a.id,delta:60,won:true},{id:b.id,delta:-60,won:false}],120),true);
+ assert.equal(await db.settleRound('test-round-'+n,'holdem',[{id:a.id,delta:60,won:true},{id:b.id,delta:-60,won:false}],120),false);
+ assert.equal((await db.getUser(a.id)).chips,2060);assert.equal((await db.getUser(b.id)).chips,1940);
+ assert.equal((await db.getUser(a.id)).poker_wins,1);
+ assert.equal((await db.questsFor(a.id)).find(q=>q.id==='first-win').ready,true);
+ const reward=await db.claimQuest(a.id,'first-win');assert.equal(reward.reward,100);assert.equal(reward.user.chips,2160);
+ await assert.rejects(db.claimQuest(a.id,'first-win'),/already claimed/);
+ await assert.rejects(db.settleRound('overdraw-'+n,'21',[{id:b.id,delta:-3000,won:false}]),/safely/);
+ const u=await db.dailyBonus(b.id);assert.equal(u.chips,2440);
+ await assert.rejects(db.dailyBonus(b.id),/not ready/);
+});
